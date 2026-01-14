@@ -17,7 +17,7 @@ export default function MorePage() {
     name: 'StocksMoney Pvt Ltd',
     description: 'Leading digital products marketplace for financial tools and educational resources.',
     email: 'support@stocksmoney.com',
-    phone: '98765 43210',
+    phone: '+44 98765 43210',
     address: '221B Baker Street , London, NW1 6XE, United Kingdom',
     website: 'https://stocksmoney.com',
     founded: '2023',

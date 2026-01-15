@@ -128,10 +128,10 @@ export async function POST(request) {
       message: 'Product purchased successfully',
       order: populatedOrder,
       rewardInfo: {
-        dailyReward: productPrice * 0.1,
-        totalRewards: productPrice * 0.1 * deadlineDays,
+        dailyReward: productPrice * 0.05,
+        totalRewards: productPrice * 0.05 * deadlineDays,
         rewardDays: deadlineDays,
-        formula: `₹${productPrice} × 10% × ${deadlineDays} days = ₹${(productPrice * 0.1 * deadlineDays).toFixed(2)}`
+        formula: `₹${productPrice} × 5% × ${deadlineDays} days = ₹${(productPrice * 0.05 * deadlineDays).toFixed(2)}`
       }
     }, { status: 201 });
 

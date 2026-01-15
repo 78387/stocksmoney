@@ -33,9 +33,9 @@ export async function POST(request) {
         continue;
       }
 
-      // Calculate daily reward (20% of product price)
+      // Calculate daily reward (5% of product price)
       const productPrice = Number(order.productId?.price) || 0;
-      const dailyReward = productPrice * 0.2;
+      const dailyReward = productPrice * 0.05;
       
       if (dailyReward <= 0) {
         console.log(`Invalid reward amount for order ${order._id}: ${dailyReward}`);
@@ -58,7 +58,7 @@ export async function POST(request) {
         status: 'completed',
         productId: order.productId._id,
         orderId: order._id,
-        description: `Daily reward (20%) for ${order.productId.name}`
+        description: `Daily reward (5%) for ${order.productId.name}`
       });
 
       await rewardTransaction.save();

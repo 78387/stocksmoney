@@ -206,7 +206,7 @@ export default function AdminOrdersPage() {
             {filteredOrders.map(order => {
               const days = getDaysRemaining(order.expiryDate)
               const isExpired = days === 0
-              const dailyReward = (order.productId?.price || 0) * 0.1
+              const dailyReward = (order.productId?.price || 0) * 0.05
 
               return (
                 <tr key={order._id} className="border-t">

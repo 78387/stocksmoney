@@ -1,177 +1,169 @@
-import { NextResponse } from "next/server";
-import connectDB from "@/lib/connectDB";
-
-import Order from "@/models/Order";
-import User from "@/models/User";
-import Transaction from "@/models/Transaction";
-
-/* ==================================================
-   ✅ REQUIRED FOR MONGODB + CRON LOGIC
-================================================== */
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import { NextResponse } from 'next/server';
+import connectDB from '@/lib/db';
+import Order from '@/models/Order';
+import User from '@/models/User';
+import Transaction from '@/models/Transaction';
 
 export async function POST(request) {
   try {
-    // ✅ DB CONNECT
     await connectDB();
-
-    /* ================================
-       🇮🇳 INDIA TIME (IST)
-    ================================= */
-    const nowUTC = new Date();
-    const istNow = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
-
-    const todayIST = new Date(
-      istNow.getFullYear(),
-      istNow.getMonth(),
-      istNow.getDate()
-    );
-
-    /* ================================
-       📦 FETCH ACTIVE ORDERS
-    ================================= */
+    
+    // This endpoint should be called by a cron job or scheduled task
+    // For demo purposes, we'll allow manual triggering
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Find all active orders that haven't expired
     const activeOrders = await Order.find({
-      status: "active",
-      expiryDate: { $gt: nowUTC },
-    })
-      .populate({
-        path: "productId",
-        select: "price name",
-        strictPopulate: false,
-      })
-      .populate({
-        path: "userId",
-        select: "_id",
-        strictPopulate: false,
-      })
-      .lean();
+      status: 'active',
+      expiryDate: { $gt: now }
+    }).populate('productId', 'price name');
 
     let processedRewards = 0;
     let totalRewardAmount = 0;
 
-    /* ================================
-       🔁 PROCESS EACH ORDER
-    ================================= */
     for (const order of activeOrders) {
-      if (!order.userId || !order.productId) continue;
-
-      const userId =
-        typeof order.userId === "object"
-          ? order.userId._id
-          : order.userId;
-
-      /* -------------------------------
-         ⏰ DAILY CHECK (IST)
-      -------------------------------- */
-      if (order.lastRewardDate) {
-        const lastIST = new Date(
-          new Date(order.lastRewardDate).getTime() +
-            5.5 * 60 * 60 * 1000
-        );
-
-        const lastRewardDay = new Date(
-          lastIST.getFullYear(),
-          lastIST.getMonth(),
-          lastIST.getDate()
-        );
-
-        if (lastRewardDay.getTime() === todayIST.getTime()) {
-          continue;
-        }
+      // Check if reward was already processed today
+      const lastRewardDate = order.lastRewardDate ? new Date(order.lastRewardDate) : null;
+      const lastRewardDay = lastRewardDate ? new Date(lastRewardDate.getFullYear(), lastRewardDate.getMonth(), lastRewardDate.getDate()) : null;
+      
+      // Skip if reward already processed today
+      if (lastRewardDay && lastRewardDay.getTime() === today.getTime()) {
+        continue;
       }
 
-      /* -------------------------------
-         💰 SAFE PRICE
-      -------------------------------- */
-      const productPrice = Number(
-        order.productId.price?.toString()
-      );
-
-      if (!productPrice || productPrice <= 0) continue;
-
-      const dailyReward = Number((productPrice * 0.05).toFixed(2));
-
-      /* -------------------------------
-         🔒 ATOMIC LOCK
-      -------------------------------- */
-      const locked = await Order.updateOne(
-        {
-          _id: order._id,
-          $or: [
-            { lastRewardDate: { $exists: false } },
-            { lastRewardDate: { $lt: todayIST } },
-          ],
-        },
-        {
-          lastRewardDate: istNow,
-          $inc: { rewardsGenerated: dailyReward },
+      // Calculate daily reward (20% of product price)
+      const productPrice = Number(order.productId?.price) || 0;
+      const dailyReward = productPrice * 0.2;
+      
+      // Add reward to user's wallet
+      await User.findByIdAndUpdate(order.userId, {
+        $inc: { 
+          balance: dailyReward,
+          rewardBalance: dailyReward
         }
-      );
+      });
 
-      if (locked.modifiedCount === 0) continue;
-
-      /* -------------------------------
-         👤 CREDIT USER
-      -------------------------------- */
-      await User.updateOne(
-        { _id: userId },
-        {
-          $inc: {
-            balance: dailyReward,
-            rewardBalance: dailyReward,
-          },
-        }
-      );
-
-      /* -------------------------------
-         🧾 TRANSACTION LOG
-      -------------------------------- */
-      await Transaction.create({
-        userId,
-        type: "reward",
+      // Create reward transaction
+      const rewardTransaction = new Transaction({
+        userId: order.userId,
+        type: 'reward',
         amount: dailyReward,
-        status: "completed",
+        status: 'completed',
         productId: order.productId._id,
         orderId: order._id,
-        description: `Daily 5% reward for ${order.productId.name}`,
+        description: `Daily reward for ${order.productId.name}`
+      });
+
+      await rewardTransaction.save();
+
+      // Update order with last reward date and increment rewards generated
+      await Order.findByIdAndUpdate(order._id, {
+        lastRewardDate: now,
+        $inc: { rewardsGenerated: dailyReward }
       });
 
       processedRewards++;
       totalRewardAmount += dailyReward;
     }
 
-    /* ================================
-       ⌛ EXPIRE ORDERS
-    ================================= */
+    // Update expired orders status
     const expiredOrders = await Order.updateMany(
       {
-        status: "active",
-        expiryDate: { $lte: nowUTC },
+        status: 'active',
+        expiryDate: { $lte: now }
       },
-      { status: "expired" }
+      {
+        status: 'expired'
+      }
     );
 
-    /* ================================
-       ✅ RESPONSE
-    ================================= */
     return NextResponse.json({
-      success: true,
-      activeOrders: activeOrders.length,
-      todayRewards: {
-        count: processedRewards,
-        amount: totalRewardAmount.toFixed(2),
-      },
-      expiredOrders: expiredOrders.modifiedCount,
+      message: 'Rewards processed successfully',
+      processedRewards,
+      totalRewardAmount: totalRewardAmount.toFixed(2),
+      expiredOrders: expiredOrders.modifiedCount
     });
-  } catch (error) {
-    console.error("❌ Reward processing error:", error);
 
+  } catch (error) {
+    console.error('Reward processing error:', error);
     return NextResponse.json(
+      { message: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+// Get reward statistics
+export async function GET(request) {
+  try {
+    await connectDB();
+    
+    const now = new Date();
+    
+    // Get active orders count
+    const activeOrdersCount = await Order.countDocuments({
+      status: 'active',
+      expiryDate: { $gt: now }
+    });
+
+    // Get total rewards distributed today
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todayRewards = await Transaction.aggregate([
       {
-        success: false,
-        message: "Internal server error",
+        $match: {
+          type: 'reward',
+          createdAt: {
+            $gte: today,
+            $lt: tomorrow
+          }
+        }
       },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get total rewards distributed all time
+    const totalRewards = await Transaction.aggregate([
+      {
+        $match: {
+          type: 'reward'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return NextResponse.json({
+      activeOrders: activeOrdersCount,
+      todayRewards: {
+        amount: todayRewards[0]?.totalAmount || 0,
+        count: todayRewards[0]?.count || 0
+      },
+      totalRewards: {
+        amount: totalRewards[0]?.totalAmount || 0,
+        count: totalRewards[0]?.count || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Reward stats error:', error);
+    return NextResponse.json(
+      { message: 'Internal server error' },
       { status: 500 }
     );
   }

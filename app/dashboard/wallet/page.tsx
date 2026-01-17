@@ -400,8 +400,8 @@ export default function WalletPage() {
 
         <button
           onClick={() => setShowWithdrawModal(true)}
-          disabled={!user?.rewardBalance || user.rewardBalance < 300}
-          className={`flex items-center justify-center space-x-2 py-4 ${!user?.rewardBalance || user.rewardBalance < 300
+          disabled={!user?.rewardBalance || user.rewardBalance < 1000}
+          className={`flex items-center justify-center space-x-2 py-4 ${!user?.rewardBalance || user.rewardBalance < 1000
             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
             : 'btn-secondary'
             }`}

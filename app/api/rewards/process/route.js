@@ -33,9 +33,9 @@ export async function POST(request) {
         continue;
       }
 
-      // Calculate daily reward (20% of product price)
+      // Calculate daily reward (5% of product price)
       const productPrice = Number(order.productId?.price) || 0;
-      const dailyReward = productPrice * 0.2;
+      const dailyReward = productPrice * 0.05;
       
       // Add reward to user's wallet
       await User.findByIdAndUpdate(order.userId, {

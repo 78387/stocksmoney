@@ -7,21 +7,29 @@ import Transaction from "@/models/Transaction";
 
 export async function POST() {
   try {
+    // ✅ DB CONNECT
     await connectDB();
 
-    const now = new Date();
-
-    // normalize today's date (00:00:00)
-    const today = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
+    /* ================================
+       🇮🇳 INDIA TIME (IST) LOGIC
+    ================================= */
+    const nowUTC = new Date();
+    const istNow = new Date(
+      nowUTC.getTime() + 5.5 * 60 * 60 * 1000
     );
 
-    // fetch only valid active orders
+    const todayIST = new Date(
+      istNow.getFullYear(),
+      istNow.getMonth(),
+      istNow.getDate()
+    );
+
+    /* ================================
+       📦 FETCH ACTIVE ORDERS
+    ================================= */
     const activeOrders = await Order.find({
       status: "active",
-      expiryDate: { $gt: now },
+      expiryDate: { $gt: nowUTC },
     })
       .populate({
         path: "productId",
@@ -33,13 +41,16 @@ export async function POST() {
         select: "_id",
         strictPopulate: false,
       })
-      .lean(); // 🔥 prevents mongoose mutation bugs
+      .lean();
 
     let processedRewards = 0;
     let totalRewardAmount = 0;
 
+    /* ================================
+       🔁 PROCESS EACH ORDER
+    ================================= */
     for (const order of activeOrders) {
-      // ❌ skip broken relations
+      // ❌ skip broken references
       if (!order.userId || !order.productId) continue;
 
       // normalize userId
@@ -48,50 +59,66 @@ export async function POST() {
           ? order.userId._id
           : order.userId;
 
-      // last reward check (order-wise)
+      /* -------------------------------
+         ⏰ DAILY CHECK (IST)
+      -------------------------------- */
       if (order.lastRewardDate) {
-        const last = new Date(order.lastRewardDate);
-        const lastDay = new Date(
-          last.getFullYear(),
-          last.getMonth(),
-          last.getDate()
+        const lastIST = new Date(
+          new Date(order.lastRewardDate).getTime() +
+            5.5 * 60 * 60 * 1000
         );
 
-        if (lastDay.getTime() === today.getTime()) {
+        const lastRewardDay = new Date(
+          lastIST.getFullYear(),
+          lastIST.getMonth(),
+          lastIST.getDate()
+        );
+
+        if (lastRewardDay.getTime() === todayIST.getTime()) {
           continue; // already rewarded today
         }
       }
 
-      // safe price parsing (Decimal128 safe)
+      /* -------------------------------
+         💰 PRICE (Decimal128 SAFE)
+      -------------------------------- */
       const productPrice = parseFloat(
         order.productId.price?.toString()
       );
 
       if (isNaN(productPrice) || productPrice <= 0) continue;
 
-      // EXACT 5% daily reward
+      // ✅ EXACT 5% DAILY
       const dailyReward = Number(
         (productPrice * 0.05).toFixed(2)
       );
 
-      // 🔒 atomic order lock (prevents double reward)
+      /* -------------------------------
+         🔒 ATOMIC LOCK (NO DOUBLE PAY)
+      -------------------------------- */
       const locked = await Order.updateOne(
         {
           _id: order._id,
           $or: [
             { lastRewardDate: { $exists: false } },
-            { lastRewardDate: { $lt: today } },
+            {
+              lastRewardDate: {
+                $lt: todayIST,
+              },
+            },
           ],
         },
         {
-          lastRewardDate: now,
+          lastRewardDate: istNow,
           $inc: { rewardsGenerated: dailyReward },
         }
       );
 
       if (locked.modifiedCount === 0) continue;
 
-      // credit user wallet
+      /* -------------------------------
+         👤 CREDIT USER
+      -------------------------------- */
       await User.updateOne(
         { _id: userId },
         {
@@ -102,7 +129,9 @@ export async function POST() {
         }
       );
 
-      // record transaction
+      /* -------------------------------
+         🧾 TRANSACTION LOG
+      -------------------------------- */
       await Transaction.create({
         userId,
         type: "reward",
@@ -117,21 +146,32 @@ export async function POST() {
       totalRewardAmount += dailyReward;
     }
 
-    // expire old orders
+    /* ================================
+       ⌛ EXPIRE ORDERS
+    ================================= */
     const expiredOrders = await Order.updateMany(
-      { status: "active", expiryDate: { $lte: now } },
+      {
+        status: "active",
+        expiryDate: { $lte: nowUTC },
+      },
       { status: "expired" }
     );
 
+    /* ================================
+       ✅ RESPONSE
+    ================================= */
     return NextResponse.json({
       success: true,
-      message: "Daily rewards processed successfully",
-      processedRewards,
-      totalRewardAmount: totalRewardAmount.toFixed(2),
+      activeOrders: activeOrders.length,
+      todayRewards: {
+        count: processedRewards,
+        amount: totalRewardAmount.toFixed(2),
+      },
       expiredOrders: expiredOrders.modifiedCount,
     });
   } catch (error) {
-    console.error("Reward processing error:", error);
+    console.error("❌ Reward processing error:", error);
+
     return NextResponse.json(
       {
         success: false,

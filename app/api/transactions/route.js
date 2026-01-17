@@ -172,9 +172,9 @@ export async function POST(request) {
 
     } else if (type === 'withdraw') {
       // Check minimum withdrawal amount
-      if (amount < 300) {
+      if (amount < 1000) {
         return NextResponse.json(
-          { message: 'Minimum withdrawal amount is ₹300' },
+          { message: 'Minimum withdrawal amount is ₹1000' },
           { status: 400 }
         );
       }

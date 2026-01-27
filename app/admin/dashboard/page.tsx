@@ -131,7 +131,7 @@ export default function AdminDashboardPage() {
     },
     {
       title: 'Total Revenue',
-      value: `₹${((stats?.totalDeposits || 0) * 0.02).toLocaleString()}`,
+      value: `₹${((stats?.totalDeposits || 0) * 0.05).toLocaleString()}`,
       icon: DollarSign,
       color: 'from-amber-500 to-amber-600',
       bgColor: 'bg-amber-50',

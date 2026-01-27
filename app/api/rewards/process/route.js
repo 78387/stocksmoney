@@ -4,17 +4,18 @@ import Order from '@/models/Order';
 import User from '@/models/User';
 import Transaction from '@/models/Transaction';
 
+/**
+ * POST → Process daily rewards (5%)
+ * This should be triggered by a cron job
+ */
 export async function POST(request) {
   try {
     await connectDB();
-    
-    // This endpoint should be called by a cron job or scheduled task
-    // For demo purposes, we'll allow manual triggering
-    
+
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    // Find all active orders that haven't expired
+
+    // Get all active & non-expired orders
     const activeOrders = await Order.find({
       status: 'active',
       expiryDate: { $gt: now }
@@ -24,41 +25,49 @@ export async function POST(request) {
     let totalRewardAmount = 0;
 
     for (const order of activeOrders) {
-      // Check if reward was already processed today
-      const lastRewardDate = order.lastRewardDate ? new Date(order.lastRewardDate) : null;
-      const lastRewardDay = lastRewardDate ? new Date(lastRewardDate.getFullYear(), lastRewardDate.getMonth(), lastRewardDate.getDate()) : null;
-      
-      // Skip if reward already processed today
+      // Check if reward already given today
+      const lastRewardDate = order.lastRewardDate
+        ? new Date(order.lastRewardDate)
+        : null;
+
+      const lastRewardDay = lastRewardDate
+        ? new Date(
+            lastRewardDate.getFullYear(),
+            lastRewardDate.getMonth(),
+            lastRewardDate.getDate()
+          )
+        : null;
+
       if (lastRewardDay && lastRewardDay.getTime() === today.getTime()) {
         continue;
       }
 
-      // Calculate daily reward (20% of product price)
+      // 🔹 Calculate DAILY reward = 5%
       const productPrice = Number(order.productId?.price) || 0;
-      const dailyReward = productPrice * 0.2;
-      
-      // Add reward to user's wallet
+      const dailyReward = productPrice * 0.05;
+
+      if (dailyReward <= 0) continue;
+
+      // 🔹 Add reward to user wallet
       await User.findByIdAndUpdate(order.userId, {
-        $inc: { 
+        $inc: {
           balance: dailyReward,
           rewardBalance: dailyReward
         }
       });
 
-      // Create reward transaction
-      const rewardTransaction = new Transaction({
+      // 🔹 Create transaction record
+      await Transaction.create({
         userId: order.userId,
         type: 'reward',
         amount: dailyReward,
         status: 'completed',
         productId: order.productId._id,
         orderId: order._id,
-        description: `Daily reward for ${order.productId.name}`
+        description: `Daily 5% reward for ${order.productId.name}`
       });
 
-      await rewardTransaction.save();
-
-      // Update order with last reward date and increment rewards generated
+      // 🔹 Update order
       await Order.findByIdAndUpdate(order._id, {
         lastRewardDate: now,
         $inc: { rewardsGenerated: dailyReward }
@@ -68,59 +77,55 @@ export async function POST(request) {
       totalRewardAmount += dailyReward;
     }
 
-    // Update expired orders status
+    // 🔹 Mark expired orders
     const expiredOrders = await Order.updateMany(
       {
         status: 'active',
         expiryDate: { $lte: now }
       },
-      {
-        status: 'expired'
-      }
+      { status: 'expired' }
     );
 
     return NextResponse.json({
-      message: 'Rewards processed successfully',
+      success: true,
+      message: 'Daily rewards processed successfully',
       processedRewards,
       totalRewardAmount: totalRewardAmount.toFixed(2),
       expiredOrders: expiredOrders.modifiedCount
     });
-
   } catch (error) {
     console.error('Reward processing error:', error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { success: false, message: 'Internal server error' },
       { status: 500 }
     );
   }
 }
 
-// Get reward statistics
+/**
+ * GET → Reward statistics
+ */
 export async function GET(request) {
   try {
     await connectDB();
-    
-    const now = new Date();
-    
-    // Get active orders count
-    const activeOrdersCount = await Order.countDocuments({
-      status: 'active',
-      expiryDate: { $gt: now }
-    });
 
-    // Get total rewards distributed today
+    const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    // Active orders
+    const activeOrders = await Order.countDocuments({
+      status: 'active',
+      expiryDate: { $gt: now }
+    });
+
+    // Today's rewards
     const todayRewards = await Transaction.aggregate([
       {
         $match: {
           type: 'reward',
-          createdAt: {
-            $gte: today,
-            $lt: tomorrow
-          }
+          createdAt: { $gte: today, $lt: tomorrow }
         }
       },
       {
@@ -132,13 +137,9 @@ export async function GET(request) {
       }
     ]);
 
-    // Get total rewards distributed all time
+    // All-time rewards
     const totalRewards = await Transaction.aggregate([
-      {
-        $match: {
-          type: 'reward'
-        }
-      },
+      { $match: { type: 'reward' } },
       {
         $group: {
           _id: null,
@@ -149,7 +150,8 @@ export async function GET(request) {
     ]);
 
     return NextResponse.json({
-      activeOrders: activeOrdersCount,
+      success: true,
+      activeOrders,
       todayRewards: {
         amount: todayRewards[0]?.totalAmount || 0,
         count: todayRewards[0]?.count || 0
@@ -159,11 +161,10 @@ export async function GET(request) {
         count: totalRewards[0]?.count || 0
       }
     });
-
   } catch (error) {
     console.error('Reward stats error:', error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { success: false, message: 'Internal server error' },
       { status: 500 }
     );
   }
